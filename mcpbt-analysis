@@ -1,0 +1,209 @@
+# Define required packages
+packages <- c("performance", "sjPlot", "ggplot2", "patchwork",
+              "readxl", "datawizard", "emmeans", "car", "tidyr", "Matrix", "dplyr", "ggpubr","influence.ME", "see", "lmtest", "sandwich", "clubSandwich", "parameters", "glmmTMB")
+
+# Install any missing packages
+new.packages <- packages[!(packages %in% installed.packages()[, "Package"])]
+if(length(new.packages)) install.packages(new.packages)
+
+# Load all packages
+lapply(packages, library, character.only = TRUE)
+
+
+
+# 1. Load data
+df <- read_excel("Desktop/mcpbt_final_data/mcpbt_master.xlsx")
+
+# 2. Convert GROUP and Time to a factor with ordered levels
+df$group <- factor(df$group, levels = c("CON", "EX","FOL","LUT"))
+df$time <- factor(df$time, levels = c("pre", "post"))
+df$id <- factor(df$id)
+df$tot_vol <- as.numeric(df$tot_vol)
+
+# 7. Standardize continuous predictors (e.g., training volume)
+df$vol_scaled <- 0  # Initialize the new column with 
+df$vol_scaled[df$time == "post"] <- as.numeric(scale(df$tot_vol[df$time == "post"]))
+
+
+
+
+# 1. Descriptive summary of all variables
+summary(df)
+
+# 2. Structure of the dataset (data types, etc.)
+str(df)
+
+# 3. Count of observations for each group at each time point
+table(df$group, df$time)
+
+# 4. Total number of missing values
+sum(is.na(df))
+
+# 5. Define a reusable function for boxplot visualizations
+plot_pre_post <- function(data, yvar, ylab, title) {
+  ggplot(data, aes(x = time, y = .data[[yvar]], fill = time)) +
+    geom_boxplot(alpha = 0.7, outlier.shape = NA, position = position_dodge(0.8)) +
+    geom_point(aes(color = time), position = position_dodge(0.8), size = 2, alpha = 0.6) +
+    geom_line(aes(group = id), color = "black", alpha = 0.5) +
+    scale_fill_manual(values = c("pre" = "lightblue", "post" = "coral")) +
+    scale_color_manual(values = c("pre" = "blue", "post" = "red")) +
+    facet_wrap(~group, nrow = 1, scales = "fixed") +
+    labs(title = title,
+         x = "Time",
+         y = ylab,
+         fill = "Time",
+         color = "Time") +
+    theme_minimal()
+}
+
+# 6. Generate plots
+plot_pre_post(df, "dxa", "Change in Lean Mass (g)", "DXA Pre-Post Comparison Across Groups")
+plot_pre_post(df, "us", "Ultrasound VL CSA (cm²)", "Ultrasound VL CSA Pre-Post Comparison Across Groups")
+plot_pre_post(df, "iso", "Isometric Strength (Nm)", "Isometric Strength Pre-Post Comparison Across Groups")
+plot_pre_post(df, "lp", "Leg Press (lbs)", "Leg Press Strength Pre-Post Comparison Across Groups")
+plot_pre_post(df, "le", "Leg Extension (lbs)", "Leg Extension Strength Pre-Post Comparison Across Groups")
+
+
+# LMM Development
+
+options(contrasts = c("contr.sum", "contry.poly") ) # use with interactions for your Anova
+#options(contrasts = c("contr.treatment", "contry.poly") )  # default
+
+dxalmm <- glmmTMB(log(dxa) ~ time * group + diag(1 + group + time | id), data = df)
+summary(dxalmm)
+car::Anova(dxalmm)
+
+uslmm <- glmmTMB(us ~ time * group + diag(1 + group + time | id), data = df)
+summary(uslmm)
+car::Anova(uslmm)
+
+isolmm <- glmmTMB(iso ~ time * group + diag(1 + group + time | id), data = df)
+summary(isolmm)
+car::Anova(isolmm)
+
+lplmm <- glmmTMB(lp ~ time * group + diag(1 + group + time | id), data = df)
+summary(lplmm)
+car::Anova(lplmm)
+
+lelmm <- glmmTMB(le ~ time * group + diag(1 + group + time | id), data = df)
+summary(lelmm)
+car::Anova(lelmm)
+
+
+
+# Planned contrasts were conducted to test specific hypotheses regarding differences between conditions.
+
+#DXA: Difference-in-differences
+dxa <- emmeans(dxalmm,  pairwise ~ time*group) # warning is letting you know these are not of general use. We only do this as we are forming an interaction contrast.
+dxa_vs_con <- contrast(dxa[[1]], 
+                    interaction = c(group = "trt.vs.ctrl1", time = "revpairwise"),
+                    by = NULL)
+dxa_all_pairwise <- contrast(dxa[[1]], 
+                                 interaction = c(group = "revpairwise", time = "revpairwise"),
+                                 by = NULL)
+# Ultrasound CSA: Difference-in-differences
+us <- emmeans(uslmm, pairwise ~ time * group)
+us_vs_con <- contrast(us[[1]], interaction = c(group = "trt.vs.ctrl1", time = "revpairwise"))
+us_all_pairwise <- contrast(us[[1]], interaction = c(group = "revpairwise", time = "revpairwise"))
+
+# Leg Press: Difference-in-differences
+lp <- emmeans(lplmm, pairwise ~ time * group)
+lp_vs_con <- contrast(lp[[1]], interaction = c(group = "trt.vs.ctrl1", time = "revpairwise"))
+lp_all_pairwise <- contrast(lp[[1]], interaction = c(group = "revpairwise", time = "revpairwise"))
+
+# Leg Extension: Difference-in-differences
+le <- emmeans(lelmm, pairwise ~ time * group)
+le_vs_con <- contrast(le[[1]], interaction = c(group = "trt.vs.ctrl1", time = "revpairwise"))
+le_all_pairwise <- contrast(le[[1]], interaction = c(group = "revpairwise", time = "revpairwise"))
+
+# Isometric Strength: Difference-in-differences
+iso <- emmeans(isolmm, pairwise ~ time * group)
+iso_vs_con <- contrast(iso[[1]], interaction = c(group = "trt.vs.ctrl1", time = "revpairwise"))
+iso_all_pairwise <- contrast(iso[[1]], interaction = c(group = "revpairwise", time = "revpairwise"))
+
+
+all_vs_con <- list(dxa = dxa_vs_con, us = us_vs_con, lp = lp_vs_con, le = le_vs_con, iso = iso_vs_con)
+all_pairwise <- list(dxa = dxa_all_pairwise, us = us_all_pairwise, lp = lp_all_pairwise, le = le_all_pairwise, iso = iso_all_pairwise)
+
+all_vs_con
+all_pairwise
+
+
+
+# === Reusable plotting function ===
+make_emm_plot <- function(model, outcome_label, y_label, back_transform = FALSE) {
+  emm <- emmeans(model, ~ time | group)
+  df_emm <- as.data.frame(emm)
+  
+  df_emm <- df_emm %>%
+    mutate(
+      time = factor(time, levels = c("pre", "post")),
+      emmean_bt = if (back_transform) exp(emmean) else emmean,
+      lower.CL = if (back_transform) exp(emmean - SE) else lower.CL,
+      upper.CL = if (back_transform) exp(emmean + SE) else upper.CL
+    )
+  
+  contrast <- contrast(emm, method = "pairwise", by = "group")
+  df_contrast <- as.data.frame(contrast) %>%
+    mutate(signif = cut(p.value,
+                        breaks = c(-Inf, 0.001, 0.01, 0.05, 0.1, Inf),
+                        labels = c("***", "**", "*", "†", "ns"),
+                        right = FALSE))
+  
+  # Calculate star height per group
+  star_pos <- df_emm %>%
+    filter(time == "post") %>%
+    group_by(group) %>%
+    summarise(star_y = max(upper.CL) + 0.05 * max(upper.CL), .groups = "drop")
+  
+  df_contrast <- left_join(df_contrast, star_pos, by = "group")
+  
+  ggplot(df_emm, aes(x = time, y = emmean_bt, group = group, color = group)) +
+    geom_point(size = 3) +
+    geom_errorbar(aes(ymin = lower.CL, ymax = upper.CL), width = 0.1, linewidth = 1.2) +
+    facet_grid(. ~ group) +
+    geom_text(data = df_contrast,
+              aes(x = "post", y = star_y, label = signif),
+              inherit.aes = FALSE, size = 5, color = "black") +
+    scale_color_brewer(palette = "Dark2") +
+    labs(
+      x = NULL,
+      y = y_label,
+      title = paste("Estimated", outcome_label, ": Pre vs. Post by Group")
+    ) +
+    theme_minimal(base_size = 14) +
+    theme(
+      plot.title = element_text(face = "bold", hjust = 0.5),
+      strip.text = element_text(face = "bold", size = 12),
+      axis.text = element_text(size = 12),
+      legend.position = "none"
+    )
+}
+
+# === Generate plots ===
+
+# DXA (log-transformed → back-transform)
+plot_dxa <- make_emm_plot(dxalmm, outcome_label = "Lean Mass", y_label = "Lean Mass (grams)", back_transform = TRUE)
+
+# Ultrasound CSA
+plot_us <- make_emm_plot(uslmm, outcome_label = "Muscle CSA", y_label = "Muscle CSA (cm²)")
+
+# Isometric MVC
+plot_iso <- make_emm_plot(isolmm, outcome_label = "Isometric MVC", y_label = "Isometric MVC (Nm)")
+
+# Leg Press
+plot_lp <- make_emm_plot(lplmm, outcome_label = "1-RM Leg Press", y_label = "1-RM Leg Press (kg)")
+
+# Leg Extension
+plot_le <- make_emm_plot(lelmm, outcome_label = "1-RM Leg Extension", y_label = "1-RM Leg Extension (kg)")
+
+# === Print or save ===
+plot_dxa
+plot_us
+plot_iso
+plot_lp
+plot_le
+
+
+
+
